@@ -84,6 +84,24 @@ class ColdArchiveService(BaseModuleService):
         # 写入归档清单（供 retention 消费）
         store.add_archive_record(archive_record)
 
+        # 已确认归档状态回写清理清单：生成归档凭证（按表+版本，覆盖超热数据天数的分区）
+        covered = [
+            str(obj["分区"]) for obj in store.cleanup_objects_for_table(table_name)
+            if float(str(obj.get("_ts", time.time()))) < cutoff_ts
+        ]
+        snap_version = ""
+        readable = store.readable_snapshots_for_table(table_name)
+        if readable:
+            snap_version = str(readable[0].get("版本", ""))
+        credential = store.add_archive_credential({
+            "表名": table_name,
+            "覆盖分区": covered,
+            "归档版本": snap_version or f"archive-{int(time.time())}",
+            "状态": "已确认",
+            "来源策略": str(entry.get("策略编号", "")),
+            "归档时间": archive_record["归档时间"],
+        })
+
         entry["归档时间"] = time.strftime("%Y-%m-%d %H:%M:%S")
 
         batch_id = f"COLD_ARCHIVE_{entry_id}_{int(time.time())}"
@@ -96,6 +114,7 @@ class ColdArchiveService(BaseModuleService):
             "archived_rows": archived_rows,
             "cold_path": cold_path,
             "archive_fmt": archive_fmt,
+            "credential": credential["凭证编号"],
         }
 
     def emit_archive_manifest(self) -> list[dict[str, Any]]:

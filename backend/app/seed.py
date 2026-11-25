@@ -4,7 +4,11 @@
 """
 from __future__ import annotations
 
+import time
 from typing import Any
+
+_NOW = int(time.time())
+_DAY = 86400
 
 SEED_ROWS: dict[str, list[dict[str, Any]]] = {
     "stream_source": [
@@ -170,6 +174,16 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
          '快照时间': '2026-09-03', '快照版本': 'v3',
          '行数统计': '2500000', '存储路径': 's3://snapshots/dwd_trades_merged/v3/',
          '压缩格式': 'parquet', '校验摘要': ''},
+        {'id': 4, 'status': '已完成', 'pending': False, 'abnormal': False,
+         '快照编号': 'SNAP-0004', '源表名称': 'dwd_trades_merged',
+         '快照时间': '2026-10-06', '快照版本': 'v4',
+         '行数统计': '2600000', '存储路径': 's3://snapshots/dwd_trades_merged/v4/',
+         '压缩格式': 'parquet', '校验摘要': ''},
+        {'id': 5, 'status': '已完成', 'pending': False, 'abnormal': False,
+         '快照编号': 'SNAP-0005', '源表名称': 'dwd_trades_merged',
+         '快照时间': '2026-11-15', '快照版本': 'v5',
+         '行数统计': '2650000', '存储路径': 's3://snapshots/dwd_trades_merged/v5/',
+         '压缩格式': 'parquet', '校验摘要': ''},
     ],
     "data_reconcile": [
         {'id': 1, 'status': '待执行', 'pending': True, 'abnormal': False,
@@ -286,7 +300,7 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
          '清理方式': '硬删除', '生效时间': ''},
         {'id': 3, 'status': '已生效', 'pending': False, 'abnormal': False,
          '策略编号': 'RETE-0003', '目标表': 'dwd_trades_merged',
-         '保留天数': '30', '最小快照数': '3',
+         '保留天数': '30', '最小快照数': '2',
          '自动清理': '是', '例外规则': '审计数据',
          '清理方式': '归档后删除', '生效时间': '2026-09-03'},
     ],
@@ -307,4 +321,53 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
          '分区列': 'trade_date', '排序键列': 'trade_id',
          '写入模式': 'merge', '合并引擎': 'copy-on-write'},
     ],
+}
+
+
+# ---------------------------------------------------------------------------
+# 保留管理 · 清理预览种子数据
+# 验收场景：dwd_trades_merged 三份有效快照、最低保留两份；
+# 一笔保留期内数据、一笔只有别表凭证的旧分区、一笔待补凭证的旧分区。
+# ---------------------------------------------------------------------------
+
+# 清理对象（表的分区）：_ts 为数据时间，相对启动时间计算，保证保留期语义稳定
+SEED_CLEANUP_OBJECTS: list[dict[str, Any]] = [
+    {'表名': 'dwd_trades_merged', '分区': 'dt=2026-11-20', '数据版本': 'v5',
+     '行数': 96000, '_ts': _NOW - 5 * _DAY, '标记': '日常增量'},
+    {'表名': 'dwd_trades_merged', '分区': 'dt=2026-08-01', '数据版本': 'v4',
+     '行数': 210000, '_ts': _NOW - 100 * _DAY, '标记': '审计数据留存'},
+    {'表名': 'dwd_trades_merged', '分区': 'dt=2026-07-01', '数据版本': 'v4',
+     '行数': 240000, '_ts': _NOW - 140 * _DAY, '标记': '历史分区'},
+    {'表名': 'dwd_trades_merged', '分区': 'dt=2026-06-01', '数据版本': 'v3',
+     '行数': 230000, '_ts': _NOW - 170 * _DAY, '标记': '历史分区'},
+    {'表名': 'dwd_trades_merged', '分区': 'dt=2026-05-01', '数据版本': 'v2',
+     '行数': 225000, '_ts': _NOW - 200 * _DAY, '标记': '历史分区'},
+    {'表名': 'dwd_trades_merged', '分区': 'dt=2026-04-01', '数据版本': 'v5',
+     '行数': 215000, '_ts': _NOW - 230 * _DAY, '标记': '历史分区'},
+]
+
+# 归档凭证：冷热分层已确认归档回写到清理清单；CRED-0003 是别表凭证
+SEED_ARCHIVE_CREDENTIALS: list[dict[str, Any]] = [
+    {'凭证编号': 'CRED-0001', '表名': 'dwd_trades_merged',
+     '覆盖分区': ['dt=2026-06-01'], '归档版本': 'v3', '状态': '已确认',
+     '来源策略': 'COLD-0003', '归档时间': '2026-09-03 10:00:00'},
+    {'凭证编号': 'CRED-0002', '表名': 'dwd_trades_merged',
+     '覆盖分区': ['dt=2026-07-01'], '归档版本': 'v4', '状态': '已确认',
+     '来源策略': 'COLD-0003', '归档时间': '2026-10-06 10:00:00'},
+    {'凭证编号': 'CRED-0003', '表名': 'dwd_orders_merged',
+     '覆盖分区': ['dt=2026-05-01'], '归档版本': 'v2', '状态': '已确认',
+     '来源策略': 'COLD-0001', '归档时间': '2026-09-01 10:00:00'},
+]
+
+# 快照覆盖详情：恢复依据按"覆盖该分区的最近可读快照"计算
+SEED_SNAPSHOT_DETAILS: dict[str, dict[str, Any]] = {
+    'SNAP-0003': {'表名': 'dwd_trades_merged', '版本': 'v3',
+                  '覆盖分区': ['dt=2026-06-01'], '_ts': _NOW - 80 * _DAY,
+                  '存储路径': 's3://snapshots/dwd_trades_merged/v3/', 'revoked': False},
+    'SNAP-0004': {'表名': 'dwd_trades_merged', '版本': 'v4',
+                  '覆盖分区': ['dt=2026-07-01'], '_ts': _NOW - 50 * _DAY,
+                  '存储路径': 's3://snapshots/dwd_trades_merged/v4/', 'revoked': False},
+    'SNAP-0005': {'表名': 'dwd_trades_merged', '版本': 'v5',
+                  '覆盖分区': ['dt=2026-04-01', 'dt=2026-11-20'], '_ts': _NOW - 10 * _DAY,
+                  '存储路径': 's3://snapshots/dwd_trades_merged/v5/', 'revoked': False},
 }
